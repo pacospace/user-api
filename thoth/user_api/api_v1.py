@@ -321,7 +321,7 @@ def get_advise_python(analysis_id):
 
 
 def get_advise_python_log(analysis_id: str):
-    """Get adviser log."""
+    """Get adviser log.""" 
     return _get_job_log(locals(), "adviser-", Configuration.THOTH_BACKEND_NAMESPACE)
 
 
@@ -583,6 +583,13 @@ def get_info():
         "s3_bucket_prefix": os.getenv("THOTH_CEPH_BUCKET_PREFIX"),
     }
 
+
+def list_python_packages():
+    """
+    Retrieve information from the Knowledge Graph with regards to 
+    Python Package Names and the number of distinct Versions.
+    """
+    return
 
 def _do_listing(adapter_class, page: int) -> tuple:
     """Perform actual listing of documents available."""
