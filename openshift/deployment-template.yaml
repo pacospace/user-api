@@ -3,18 +3,36 @@ kind: Template
 metadata:
   name: user-api-deployment
   annotations:
-    description: This is Thoth - User API
-    openshift.io/display-name: 'Thoth Core: User API'
-    version: 0.7.0
-    tags: poc,thoth,user-api,ai-stacks,aistacks
+    description: "Thoth: User API"
+    openshift.io/display-name: "Thoth Core: User API"
+    version: 0.9.0
+    tags: thoth,user-api,ai-stacks,aistacks
     template.openshift.io/documentation-url: https://github.com/Thoth-Station/
     template.openshift.io/long-description: >
       This template defines resources needed to deploy Thoth User API on OpenShift.
-    template.openshift.io/provider-display-name: Red Hat, Inc.
+    template.openshift.io/provider-display-name: "Red Hat, Inc."
   labels:
     template: user-api-deployment
     app: thoth
     component: user-api
+
+parameters:
+  - description: "Project the ImageStream to be use lives in."
+    displayName: "ImageStream Project"
+    required: true
+    name: IMAGE_STREAM_NAMESPACE
+
+  - description: "Tag of the ImageStream to be use."
+    displayName: "ImageStream Tag"
+    required: true
+    name: IMAGE_STREAM_TAG
+    value: "latest"
+
+  - description: "Service account to be used."
+    displayName: "Service account name"
+    required: true
+    name: SERVICE_ACCOUNT_NAME
+    value: "user-api"
 
 objects:
   - kind: Route
@@ -28,6 +46,24 @@ objects:
       to:
         kind: Service
         name: user-api
+
+  - kind: Route
+    apiVersion: route.openshift.io/v1
+    metadata:
+      labels:
+        app: thoth
+        component: user-api
+      name: user-api-grpc
+    spec:
+      port:
+        targetPort: grpc
+      tls:
+        termination: passthrough
+      to:
+        kind: Service
+        name: user-api-grpc
+        weight: 100
+      wildcardPolicy: None
 
   - kind: Service
     apiVersion: v1
@@ -43,6 +79,23 @@ objects:
           targetPort: 8080
       selector:
         service: user-api
+
+  - kind: Service
+    apiVersion: v1
+    metadata:
+      labels:
+        app: thoth
+        component: user-api
+      name: user-api-grpc
+    spec:
+      type: ClusterIP
+      ports:
+        - name: grpc
+          port: 8443
+          protocol: TCP
+          targetPort: 8443
+      selector:
+        service: stub-api
 
   - kind: DeploymentConfig
     apiVersion: v1
@@ -60,14 +113,14 @@ objects:
           labels:
             service: user-api
         spec:
-          serviceAccountName: analyzer
+          serviceAccountName: "${SERVICE_ACCOUNT_NAME}"
           containers:
             - name: user-api
               env:
                 - name: APP_MODULE
-                  value: 'thoth.user_api.entrypoint:app'
+                  value: "thoth.user_api.openapi_server:app"
                 - name: KUBERNETES_API_URL
-                  value: 'https://kubernetes.default.svc.cluster.local'
+                  value: "https://kubernetes.default.svc.cluster.local"
                 - name: KUBERNETES_VERIFY_TLS
                   value: "0"
                 - name: THOTH_RESULT_API_URL
@@ -167,19 +220,43 @@ objects:
                     secretKeyRef:
                       name: thoth
                       key: sentry-dsn
+                - name: KNOWLEDGE_GRAPH_HOST
+                  valueFrom:
+                    configMapKeyRef:
+                      key: postgresql-host
+                      name: thoth
+                - name: KNOWLEDGE_GRAPH_PORT
+                  value: "5432"
+                - name: KNOWLEDGE_GRAPH_SSL_DISABLED
+                  value: "1"
+                - name: KNOWLEDGE_GRAPH_USER
+                  valueFrom:
+                    secretKeyRef:
+                      name: postgresql
+                      key: database-user
+                - name: KNOWLEDGE_GRAPH_PASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: postgresql
+                      key: database-password
+                - name: KNOWLEDGE_GRAPH_DATABASE
+                  valueFrom:
+                    secretKeyRef:
+                      name: postgresql
+                      key: database-name
               ports:
                 - containerPort: 8080
                   protocol: TCP
               resources:
                 requests:
-                  memory: "384Mi"
-                  cpu: "125m"
+                  memory: "1Gi"
+                  cpu: "2"
                 limits:
-                  memory: "384Mi"
-                  cpu: "500m"
+                  memory: "1Gi"
+                  cpu: "2"
               readinessProbe:
                 httpGet:
-                  path: '/readiness'
+                  path: "/readiness"
                   port: 8080
                   scheme: HTTP
                 initialDelaySeconds: 5
@@ -187,7 +264,7 @@ objects:
                 timeoutSeconds: 10
               livenessProbe:
                 httpGet:
-                  path: '/liveness'
+                  path: "/liveness"
                   port: 8080
                   scheme: HTTP
                 initialDelaySeconds: 5
@@ -203,11 +280,5 @@ objects:
               - user-api
             from:
               kind: ImageStreamTag
-              name: 'user-api:${IMAGE_STREAM_TAG}'
-
-parameters:
-  - description: Tag of the ImageStream to use
-    displayName: ImageStream Tag
-    required: true
-    name: IMAGE_STREAM_TAG
-    value: 'latest'
+              namespace: "${IMAGE_STREAM_NAMESPACE}"
+              name: "user-api:${IMAGE_STREAM_TAG}"

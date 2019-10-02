@@ -5,16 +5,26 @@ name = "pypi"
 
 [packages]
 attrs = "*"
-connexion = {extras = ["swagger-ui"],version = "<2.1.0"}
+connexion = {extras = ["swagger-ui"],version = "*"}
+flask = "*"
 flask-script = "*"
+grpcio = "*"
+grpcio-opentracing = "*"
+grpcio-tools = "*"
 gunicorn = "*"
+jaeger-client = "*"
+opentracing-instrumentation = "*"
 prometheus-client = "*"
 prometheus-flask-exporter = "*"
 requests = "*"
 thoth-analyzer = "*"
-thoth-common = {extras = ["openshift"],version = "*"}
+thoth-common = "*"
 thoth-python = "*"
 thoth-storages = "*"
+flask-cors = "*"
+
+[pipenv]
+allow_prereleases = false
 
 [dev-packages]
 pytest = "*"

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-# thoth-user-api
-# Copyright(C) 2018, 2019 Fridolin Pokorny
+# Stub
+# Copyright(C) 2019 Christoph Görn
 #
 # This program is free software: you can redistribute it and / or modify
 # it under the terms of the GNU General Public License as published by
@@ -14,60 +14,83 @@
 #
 # You should have received a copy of the GNU General Public License
 # along with this program. If not, see <http://www.gnu.org/licenses/>.
-"""Core Thoth user API."""
 
+"""Thoth User API entrypoint."""
+
+
+import os
+import sys
 import logging
 from datetime import datetime
 
 import connexion
+from connexion.resolver import RestyResolver
 
 from flask import redirect, jsonify
 from flask_script import Manager
 from prometheus_flask_exporter import PrometheusMetrics
+from flask_cors import CORS
 
-from thoth.common import SafeJSONEncoder
+from thoth.common import datetime2datetime_str
 from thoth.common import init_logging
-from thoth.storages import SolverResultsStore
+from thoth.storages import GraphDatabase
+from thoth.user_api import __version__
+from thoth.user_api.configuration import Configuration
+from thoth.user_api.configuration import init_jaeger_tracer
 
-import thoth.user_api as thoth_user_api
 
-from .configuration import Configuration
+# Configure global application logging using Thoth's init_logging.
+init_logging(logging_env_var_start="THOTH_USER_API_LOG_")
 
+_LOGGER = logging.getLogger("thoth.user_api")
+_LOGGER.setLevel(logging.DEBUG if bool(int(os.getenv("THOTH_USER_API_DEBUG", 0))) else logging.INFO)
 
-logger = logging.getLogger("werkzeug")
-logger.setLevel(logging.WARNING)
+_LOGGER.info(f"This is User API v%s", __version__)
+_LOGGER.debug("DEBUG mode is enabled!")
 
 # Expose for uWSGI.
-app = connexion.App(__name__)
-application = app.app
-init_logging()
-_LOGGER = logging.getLogger("thoth.user_api")
+app = connexion.FlaskApp(__name__, specification_dir=Configuration.SWAGGER_YAML_PATH, debug=True)
 
-app.add_api(Configuration.SWAGGER_YAML_PATH)
-application.json_encoder = SafeJSONEncoder
-metrics = PrometheusMetrics(application)
+# Add Cross Origin Request Policy to all
+CORS(app.app)
+
+app.add_api(
+    "openapi.yaml",
+    options={"swagger_ui": True},
+    arguments={"title": "User API"},
+    resolver=RestyResolver(default_module_name="thoth.user_api.api_v1"),
+    strict_validation=True,
+    validate_responses=False,
+)
+
+
+application = app.app
+
+
+# create tracer and put it in the application configuration
+Configuration.tracer = init_jaeger_tracer("user_api")
+
+# create metrics and manager
+metrics = PrometheusMetrics(application, group_by="endpoint")
 manager = Manager(application)
 
 # Needed for session.
 application.secret_key = Configuration.APP_SECRET_KEY
 
 # static information as metric
-metrics.info("user_api_info", "User API info", version=thoth_user_api.__version__)
+metrics.info("user_api_info", "User API info", version=__version__)
 
 
 @app.route("/")
-@metrics.do_not_track()
 def base_url():
     """Redirect to UI by default."""
     return redirect("api/v1/ui")
 
 
 @app.route("/api/v1")
-@metrics.do_not_track()
 def api_v1():
     """Provide a listing of all available endpoints."""
     paths = []
-
     for rule in application.url_map.iter_rules():
         rule = str(rule)
         if rule.startswith("/api/v1"):
@@ -77,24 +100,18 @@ def api_v1():
 
 
 def _healthiness():
-    """Check service healthiness."""
-    # Check that Ceph is reachable.
-    adapter = SolverResultsStore()
-    adapter.connect()
-    adapter.ceph.check_connection()
-
-    return jsonify({"status": "ready", "version": thoth_user_api.__version__}), 200, {"ContentType": "application/json"}
+    graph = GraphDatabase()
+    graph.connect()
+    return jsonify({"status": "ready", "version": __version__}), 200, {"ContentType": "application/json"}
 
 
 @app.route("/readiness")
-@metrics.do_not_track()
 def api_readiness():
     """Report readiness for OpenShift readiness probe."""
     return _healthiness()
 
 
 @app.route("/liveness")
-@metrics.do_not_track()
 def api_liveness():
     """Report liveness for OpenShift readiness probe."""
     return _healthiness()
@@ -118,13 +135,23 @@ def internal_server_error(exc):
         jsonify(
             {
                 "error": "Internal server error occurred, please contact administrator with provided details.",
-                "details": {"type": exc.__class__.__name__, "datetime": datetime.utcnow().isoformat()},
+                "details": {"type": exc.__class__.__name__, "datetime": datetime2datetime_str(datetime.utcnow())},
             }
         ),
         500,
     )
 
 
+@application.after_request
+def apply_headers(response):
+    """Add headers to each response."""
+    response.headers["X-Thoth-Version"] = __version__
+    return response
+
+
 if __name__ == "__main__":
-    _LOGGER.info(f"Thoth User API v{thoth_user_api.__version__}")
-    manager.run()
+    app.run()
+
+    Configuration.tracer.close()
+
+    sys.exit(1)
